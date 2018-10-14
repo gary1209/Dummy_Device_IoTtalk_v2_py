@@ -169,30 +169,25 @@ class Client(object):
         self._is_reconnect = False
 
     def _on_connect(self, client, userdata, flags, rc):
-        if not self._is_reconnect:
-            log.info('Successfully connect to {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.url)
-            log.info('Device ID: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.app_id)
-            log.info('Device name: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.name)
-            client.on_subscribe = self._on_ctrl_sub
-            client.subscribe(self.context.o_chans['ctrl'])
+        for key in list(self.context.i_chans):
+            if key != 'ctrl':
+                del self.context.i_chans[key]
+        for key in list(self.context.o_chans):
+            if key != 'ctrl':
+                del self.context.o_chans[key]
+        log.info('Successfully connect to {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.url)
+        log.info('Device ID: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.app_id)
+        log.info('Device name: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.name)
+        log.info('Device rev: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.rev)
+        client.on_subscribe = self._on_ctrl_sub
+        client.subscribe(self.context.o_chans['ctrl'])
 
-            client.on_publish = self._on_online_pub
-            client.publish(
-                self.context.i_chans['ctrl'],
-                json.dumps({'state': 'online', 'rev': self.context.rev}),
-                retain=True
-            )
-        else:  # in case of reconnecting, we need to renew all subscriptions
-            log.info('Reconnect: {}%s{}.'.format(DATA_COLOR, DEFAULT_COLOR), self.context.name)
-            for k, topic in self.context.o_chans.items():
-                log.info('Renew subscriptions for %s -> %s',
-                         '{}{}{}'.format(DATA_COLOR, k, DEFAULT_COLOR),
-                         '{}{}{}'.format(DATA_COLOR, topic, DEFAULT_COLOR))
-                client.subscribe(topic)
-
-        if self.context.register_callback:
-            self.context.register_callback()
-
+        client.on_publish = self._on_online_pub
+        client.publish(
+            self.context.i_chans['ctrl'],
+            json.dumps({'state': 'online', 'rev': self.context.rev}),
+            retain=True
+        )
         self._is_reconnect = True
 
     def _on_online_pub(self, client, userdata, mid):
@@ -265,7 +260,7 @@ class Client(object):
                 return
             self.context.on_data(df, json.loads(payload))
 
-    def _on_offline_pub(self, client, userdata, mid):
+    def _on_deregister_pub(self, client, userdata, mid):
         client.disconnect()
 
     def _on_disconnect(self, client, userdata, rc):
@@ -350,7 +345,8 @@ class Client(object):
                 raise RegistrationError(response.json()['reason'])
         except requests.exceptions.ConnectionError:
             raise RegistrationError('ConnectionError')
-
+        if self.context.register_callback:
+            self.context.register_callback()
         metadata = response.json()
         self.context.name = metadata['name']
         self.context.mqtt_host = metadata['url']['host']
@@ -362,10 +358,9 @@ class Client(object):
         self.context.mqtt_client.on_message = self._on_message
         self.context.mqtt_client.on_connect = self._on_connect
         self.context.mqtt_client.on_disconnect = self._on_disconnect
-
         self.context.mqtt_client.will_set(
             self.context.i_chans['ctrl'],
-            json.dumps({'state': 'broken', 'rev': rev}),
+            json.dumps({'state': 'offline', 'rev': rev}),
             retain=True,
         )
         self.context.mqtt_client.connect(
@@ -386,39 +381,23 @@ class Client(object):
     def deregister(self):
         ''' Deregister from an IoTtalk server.
 
-        This function will block until the offline message published and
-        DELETE request finished.
+        This function will block until the deregister message published.
 
         :raises: RegistrationError if not registered or deregistration failed
         '''
         if not self.context.mqtt_client:
             raise RegistrationError('Not registered')
 
-        self.context.mqtt_client.on_publish = self._on_offline_pub
+        self.context.mqtt_client.on_publish = self._on_deregister_pub
         self.context.mqtt_client.publish(
             self.context.i_chans['ctrl'],
-            json.dumps({'state': 'offline', 'rev': self.context.rev}),
+            json.dumps({'state': 'deregister', 'rev': self.context.rev}),
             retain=True
         )
-
-        try:
-            response = requests.delete(
-                '{}/{}'.format(self.context.url, self.context.app_id),
-                headers={
-                    'Content-Type': 'application/json'
-                },
-                data=json.dumps({'rev': self.context.rev})
-            )
-
-            if response.status_code != 200:
-                raise RegistrationError(response.json()['reason'])
-        except requests.exceptions.ConnectionError:
-            raise RegistrationError('ConnectionError')
-
         self._disconn_lock.acquire()  # wait for disconnect finished
         self.context.mqtt_client = None
 
-        return response.json()
+        return
 
     def push(self, idf, data, block=False):
         '''
