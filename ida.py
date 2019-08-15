@@ -1,9 +1,7 @@
 import random
 
-from dan import NoData
-
 ### The register server host, you can use IP or Domain.
-host = 'IP'
+host = 'http://garden2.iottalk.tw/csm'
 
 ### [OPTIONAL] The register port, default = 9992
 # port = 9992

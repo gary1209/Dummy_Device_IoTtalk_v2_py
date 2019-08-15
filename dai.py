@@ -138,7 +138,7 @@ def main(app):
             raise RegistrationError('unknown odf_list, usage: [df_name, ...]')
 
     context = register(
-        'http://{}:{}'.format(host, port),
+        host,
         on_signal=on_signal,
         on_data=on_data,
         accept_protos=['mqtt'],
